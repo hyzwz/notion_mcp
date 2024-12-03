@@ -15,3 +15,14 @@
 .vscode
 *.swp
 *.swo
+
+# Virtual environment
+.venv/
+
+# Python cache files
+*.pyc
+__pycache__/
+
+# Other files
+.env
+.DS_Store
