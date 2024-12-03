@@ -8,7 +8,7 @@ from mcp.types import (
 from pydantic import AnyUrl
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import httpx
 from typing import Any, Sequence
 from dotenv import load_dotenv
@@ -318,17 +318,34 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             
     elif name in ["show_all_todos", "show_today_todos"]:
         try:
+            logger.debug("Fetching todos from Notion...")
             todos = await fetch_todos()
+            logger.debug(f"Raw API response: {json.dumps(todos, indent=2, ensure_ascii=False)}")
+            
             formatted_todos = []
+            today = datetime.now(timezone.utc).date()
+            
             for todo in todos.get("results", []):
+                logger.debug(f"Processing todo: {json.dumps(todo, indent=2, ensure_ascii=False)}")
                 props = todo["properties"]
+                logger.debug(f"Todo properties: {json.dumps(props, indent=2, ensure_ascii=False)}")
+                
+                # Get due date
+                due_str = props.get("Due", {}).get("date", {}).get("start", "")
+                due_date = None
+                if due_str:
+                    try:
+                        due_date = datetime.fromisoformat(due_str.replace("Z", "+00:00")).date()
+                    except ValueError as e:
+                        logger.error(f"Error parsing due date {due_str}: {e}")
+                
                 formatted_todo = {
                     "id": todo["id"],
                     "task_id": props.get("Task ID", {}).get("rich_text", [{}])[0].get("text", {}).get("content", ""),
                     "task": props["Task name"]["title"][0]["text"]["content"] if props["Task name"]["title"] else "",
                     "status": props["Status"]["status"]["name"] if props["Status"]["status"] else "Unknown",
                     "assignee": props.get("Assignee", {}).get("people", [{}])[0].get("name", ""),
-                    "due": props.get("Due", {}).get("date", {}).get("start", ""),
+                    "due": due_str,
                     "priority": props.get("Priority", {}).get("select", {}).get("name", ""),
                     "tags": [tag["name"] for tag in props.get("Tags", {}).get("multi_select", [])],
                     "sprint": props.get("Sprint", {}).get("select", {}).get("name", ""),
@@ -336,18 +353,27 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
                     "github_pr": props.get("GitHub Pull Requests", {}).get("url", ""),
                     "created": todo["created_time"]
                 }
+                logger.debug(f"Formatted todo: {json.dumps(formatted_todo, indent=2, ensure_ascii=False)}")
                 
-                if name == "show_today_todos" and formatted_todo["due"].lower() != "today":
-                    continue
+                if name == "show_today_todos":
+                    if not due_date:
+                        logger.debug(f"Skipping todo without due date: {formatted_todo['task']}")
+                        continue
+                    if due_date != today:
+                        logger.debug(f"Skipping non-today todo: {formatted_todo['task']} (due: {due_date}, today: {today})")
+                        continue
                     
                 formatted_todos.append(formatted_todo)
             
-            return [
+            logger.info(f"Successfully processed {len(formatted_todos)} todos")
+            response = [
                 TextContent(
                     type="text",
-                    text=json.dumps(formatted_todos, indent=2)
+                    text=json.dumps(formatted_todos, indent=2, ensure_ascii=False)
                 )
             ]
+            logger.debug(f"Returning response: {response}")
+            return response
         except httpx.HTTPError as e:
             logger.error(f"Notion API error: {str(e)}")
             return [
