@@ -123,24 +123,26 @@ async def fetch_todos(
 async def create_todo(
     task: str,
     assignee: str = "",
-    due_date: str = "",
+    due: str = "",
     priority: str = "Medium",
     tags: list[str] = None,
     sprint: str = "",
     project: str = "",
-    status: str = "Not started"
+    status: str = "Not started",
+    github_pr: str = ""
 ) -> dict:
     """Create a new todo in Notion
     
     Args:
         task: Task name
         assignee: Task assignee
-        due_date: Due date in YYYY-MM-DD format
+        due: Due date in YYYY-MM-DD format
         priority: Task priority (High, Medium, Low)
         tags: List of tags
         sprint: Sprint name
         project: Project name
         status: Task status (Done, In progress, Not started)
+        github_pr: GitHub Pull Request URL
     """
     properties = {
         "Task name": {
@@ -148,8 +150,8 @@ async def create_todo(
             "title": [{"type": "text", "text": {"content": task}}]
         },
         "Status": {
-            "type": "select",
-            "select": {"name": status}
+            "type": "status",
+            "status": {"name": status}
         }
     }
     
@@ -159,10 +161,10 @@ async def create_todo(
             "people": [{"id": assignee}]
         }
     
-    if due_date:
+    if due:
         properties["Due"] = {
             "type": "date",
-            "date": {"start": due_date}
+            "date": {"start": due}
         }
     
     if priority:
@@ -189,6 +191,12 @@ async def create_todo(
             "select": {"name": project}
         }
 
+    if github_pr:
+        properties["GitHub Pull Requests"] = {
+            "type": "url",
+            "url": github_pr
+        }
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{NOTION_BASE_URL}/pages",
@@ -209,9 +217,9 @@ async def complete_todo(page_id: str) -> dict:
             headers=headers,
             json={
                 "properties": {
-                    "Checkbox": {
-                        "type": "checkbox",
-                        "checkbox": True
+                    "Status": {
+                        "type": "status",
+                        "status": {"name": "Done"}
                     }
                 }
             }
@@ -315,14 +323,21 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             for todo in todos.get("results", []):
                 props = todo["properties"]
                 formatted_todo = {
-                    "id": todo["id"],  # Include the page ID in the response
-                    "task": props["Task"]["title"][0]["text"]["content"] if props["Task"]["title"] else "",
-                    "completed": props["Checkbox"]["checkbox"],
-                    "when": props["When"]["select"]["name"] if props["When"]["select"] else "unknown",
+                    "id": todo["id"],
+                    "task_id": props.get("Task ID", {}).get("rich_text", [{}])[0].get("text", {}).get("content", ""),
+                    "task": props["Task name"]["title"][0]["text"]["content"] if props["Task name"]["title"] else "",
+                    "status": props["Status"]["status"]["name"] if props["Status"]["status"] else "Unknown",
+                    "assignee": props.get("Assignee", {}).get("people", [{}])[0].get("name", ""),
+                    "due": props.get("Due", {}).get("date", {}).get("start", ""),
+                    "priority": props.get("Priority", {}).get("select", {}).get("name", ""),
+                    "tags": [tag["name"] for tag in props.get("Tags", {}).get("multi_select", [])],
+                    "sprint": props.get("Sprint", {}).get("select", {}).get("name", ""),
+                    "project": props.get("Project", {}).get("select", {}).get("name", ""),
+                    "github_pr": props.get("GitHub Pull Requests", {}).get("url", ""),
                     "created": todo["created_time"]
                 }
                 
-                if name == "show_today_todos" and formatted_todo["when"].lower() != "today":
+                if name == "show_today_todos" and formatted_todo["due"].lower() != "today":
                     continue
                     
                 formatted_todos.append(formatted_todo)
