@@ -6,6 +6,8 @@ requires-python = ">=3.10"
 dependencies = [
     "mcp",
     "httpx",
+    "python-dotenv",
+    "pydantic",
 ]
 
 [build-system]

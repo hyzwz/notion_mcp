@@ -48,46 +48,154 @@ headers = {
     "Notion-Version": NOTION_VERSION
 }
 
-async def fetch_todos() -> dict:
-    """Fetch todos from Notion database"""
+async def fetch_todos(
+    status: str = None,
+    assignee: str = None,
+    priority: str = None,
+    project: str = None,
+    sprint: str = None,
+    sort_by: str = "Due",
+    sort_direction: str = "ascending"
+) -> dict:
+    """Fetch todos from Notion database with filters
+    
+    Args:
+        status: Filter by status (Done, In progress, Not started)
+        assignee: Filter by assignee
+        priority: Filter by priority (High, Medium, Low)
+        project: Filter by project
+        sprint: Filter by sprint
+        sort_by: Field to sort by
+        sort_direction: Sort direction (ascending or descending)
+    """
+    filter_conditions = []
+    
+    if status:
+        filter_conditions.append({
+            "property": "Status",
+            "select": {"equals": status}
+        })
+    
+    if assignee:
+        filter_conditions.append({
+            "property": "Assignee",
+            "people": {"contains": assignee}
+        })
+    
+    if priority:
+        filter_conditions.append({
+            "property": "Priority",
+            "select": {"equals": priority}
+        })
+    
+    if project:
+        filter_conditions.append({
+            "property": "Project",
+            "select": {"equals": project}
+        })
+    
+    if sprint:
+        filter_conditions.append({
+            "property": "Sprint",
+            "select": {"equals": sprint}
+        })
+    
+    filter_obj = {}
+    if filter_conditions:
+        filter_obj["filter"] = {
+            "and": filter_conditions
+        }
+    
+    filter_obj["sorts"] = [{
+        "property": sort_by,
+        "direction": sort_direction
+    }]
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{NOTION_BASE_URL}/databases/{DATABASE_ID}/query",
             headers=headers,
-            json={
-                "sorts": [
-                    {
-                        "timestamp": "created_time",
-                        "direction": "descending"
-                    }
-                ]
-            }
+            json=filter_obj
         )
         response.raise_for_status()
         return response.json()
 
-async def create_todo(task: str, when: str) -> dict:
-    """Create a new todo in Notion"""
+async def create_todo(
+    task: str,
+    assignee: str = "",
+    due_date: str = "",
+    priority: str = "Medium",
+    tags: list[str] = None,
+    sprint: str = "",
+    project: str = "",
+    status: str = "Not started"
+) -> dict:
+    """Create a new todo in Notion
+    
+    Args:
+        task: Task name
+        assignee: Task assignee
+        due_date: Due date in YYYY-MM-DD format
+        priority: Task priority (High, Medium, Low)
+        tags: List of tags
+        sprint: Sprint name
+        project: Project name
+        status: Task status (Done, In progress, Not started)
+    """
+    properties = {
+        "Task name": {
+            "type": "title",
+            "title": [{"type": "text", "text": {"content": task}}]
+        },
+        "Status": {
+            "type": "select",
+            "select": {"name": status}
+        }
+    }
+    
+    if assignee:
+        properties["Assignee"] = {
+            "type": "people",
+            "people": [{"id": assignee}]
+        }
+    
+    if due_date:
+        properties["Due"] = {
+            "type": "date",
+            "date": {"start": due_date}
+        }
+    
+    if priority:
+        properties["Priority"] = {
+            "type": "select",
+            "select": {"name": priority}
+        }
+    
+    if tags:
+        properties["Tags"] = {
+            "type": "multi_select",
+            "multi_select": [{"name": tag} for tag in tags]
+        }
+    
+    if sprint:
+        properties["Sprint"] = {
+            "type": "select",
+            "select": {"name": sprint}
+        }
+        
+    if project:
+        properties["Project"] = {
+            "type": "select",
+            "select": {"name": project}
+        }
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{NOTION_BASE_URL}/pages",
             headers=headers,
             json={
                 "parent": {"database_id": DATABASE_ID},
-                "properties": {
-                    "Task": {
-                        "type": "title",
-                        "title": [{"type": "text", "text": {"content": task}}]
-                    },
-                    "When": {
-                        "type": "select",
-                        "select": {"name": when}
-                    },
-                    "Checkbox": {
-                        "type": "checkbox",
-                        "checkbox": False
-                    }
-                }
+                "properties": properties
             }
         )
         response.raise_for_status()
@@ -184,7 +292,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | Embedde
             raise ValueError("When must be 'today' or 'later'")
             
         try:
-            result = await create_todo(task, when)
+            result = await create_todo(task, when=when)
             return [
                 TextContent(
                     type="text",
